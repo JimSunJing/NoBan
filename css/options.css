@@ -1,0 +1,33 @@
+body {
+    background-color: black;
+}
+
+h1, label {
+    color: white;
+}
+
+label {
+    margin: 0 5px;
+}
+
+input {
+    width: 150px;
+}
+
+.Line {
+    margin-top: 10px;
+}
+
+.main{
+	text-align: center; /*让div内部文字居中*/
+	background-color: rgb(36, 38, 138);
+    border-radius: 20px;
+	width: 300px;
+	height: 350px;
+	margin: auto;
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+}

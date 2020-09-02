@@ -1,0 +1,30 @@
+{
+    "manifest_version": 2,
+    "name": "NoBan",
+    "description": "A Douban to Notion Escape. 一个备份豆瓣到 Notion 的工具",
+    "version": "0.1",
+    "permissions": ["storage"],
+    "options_page": "options.html",
+    "content_scripts": [
+        {
+            "matches": [
+                "*://*.notion.so/*",
+                "https://*.douban.com/*"
+            ],
+            "js": [
+                "js/cs.js"
+            ],
+            "css": ["css/content.css"],
+            "run_at": "document_end"
+        }
+    ],
+    "background": {
+        "scripts": ["js/background.js"]
+    },
+    "icons": {
+      "16": "images/travel.png",
+      "32": "images/travel.png",
+      "48": "images/travel.png",
+      "128": "images/travel.png"
+    }
+}
