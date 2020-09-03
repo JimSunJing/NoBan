@@ -9,7 +9,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (sender.url.indexOf("www.douban.com/people") !== -1) {
         // 下面应该开始爬虫
         const Ukey = UserKey(message.douId)
-        chrome.storage.local.set({ Ukey: message }, () => {
+        chrome.storage.local.set({ [Ukey]: message }, () => {
             console.log("user info saved", message)
         })
         movieMainControl(message)
@@ -22,16 +22,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 const movieMainControl = (userInfo) => {
     // 电影看过爬取
     let page = 0
-    const url = "https://movieItem.douban.com/people/" + userInfo.douId +
+    const url = "https://movie.douban.com/people/" + userInfo.douId +
         "/collect?sort=time&amp;start=" + page * 30 +
         "&amp;filter=all&amp;mode=list&amp;tags_sort=count"
     if (!saveMoviePage(url, userInfo)) {
         // 已有重复爬取条目，可退出
         return false
     }
-
-
 }
+
 // 异步请求页面
 const fetchText = async (url) => {
     let response = await fetch(url)
@@ -39,74 +38,159 @@ const fetchText = async (url) => {
 }
 
 // 获取storage内的movie id
-const getUserMovies = (douId) => {
-    chrome.storage.local.get("user_" + douId, (data) => {
-        // data["movies"] 应该是 Array
-        return data["movies"] === null ? null :
-            data["movies"].map((row) => { row["subjectId"] })
+const getUserMovies = (douId, type) => {
+    chrome.storage.local.get(UserKey(douId), (data) => {
+        // data["user_xxx"]["movies"] 应该是 {"done":Array,...}
+        return data.movies[type]
     })
+}
+
+const setUserMovies = (douId, type, userMovies) => {
+    const Ukey = UserKey(douId)
+    chrome.storage.local.get([Ukey], (data)=>{
+        let newUser = {
+            ...data,
+            movies: {
+                ...data.movies,
+                [type]: userMovies
+            }
+        }
+        chrome.storage.set({[Ukey]: newUser}, (newUser)=>{
+            console.log("user movies updated,",newUser)
+        })
+    })
+}
+
+const getStorage = (key) => {
+    let res
+    chrome.storage.local.get(key,(data) => {
+        // 如果没有会返回 空 Object
+        res = data
+    })
+    return res
+}
+
+const setMovieMap = (map) => {
+    chrome.storage.local.set({"movieMap": map},(map)=>{
+        console.log("movieMap stored...",map)
+    })
+}
+
+const getType = (url) => {
+    if (url.indexOf("collect") !== -1)
+        return "done"
+    else if (url.indexOf("wish") !== -1)
+        return "wish"
+    return "ing"
 }
 
 // 获取dom
 const saveMoviePage = (url, userInfo) => {
     fetchText(url)
     .then((text) => {
+        // 爬取类别
+        const Type = getType(url)
         // 标记是否已经爬到历史记录
         let finished = false
         // console.log(text)
         let dom = new DOMParser().parseFromString(text, "text/html");
-        // 先获取所有已经保存好的电影条目ID，避免多次爬取
-        const movieIds = getUserMovies(userInfo.douId)
         // 获取 items 元素
         let items = Array.from(dom.querySelectorAll(".item"))
-        let movieMap = Map()
-        for (let i = 0; i<= items.length; i++){
-            let movie = getMovieItem(item, userInfo.douId, movieIds)
-            if (movie === false) {
-                // 意味着有重复爬取的条目了，标记一下
-                finished = true
-                break
-            }else {
-                // 有点怪怪的。。。2020年9月2日23点52分睡觉
-                movieMap.set(movie.subjectId, movieItem)
+        // 先获取所有已经保存好的电影条目ID，避免多次爬取
+        chrome.storage.local.get("movieMap",(mmap) => {
+            console.log("mmap:", mmap)
+            let movieMap
+            if (Object.keys(mmap).length === 0 && mmap.constructor === Object){
+                movieMap = new Map()
+            }else{ 
+                movieMap = mmap 
             }
-        }
+            console.log("movieMap:", movieMap)
+            const movieIds = Array.from(movieMap.keys())
+            chrome.storage.local.get(UserKey(userInfo.douId), (data) => {
+                // data["user_xxx"]["movies"] 应该是 {"done":Array,...}
+                let userMovies = data.hasOwnProperty("movies")? data.movies[Type] : newDoneWishIng()
+                console.log("userMovies:",userMovies)
+                userMovies = Array.from(userMovies).map((data)=>{return data.subjectId})
+                movieItemHelper(items, movieIds, userMovies, movieMap, userInfo.douId)
+            })
+        })
     }).catch(e => {
         console.log("error when fetching:", url, "info:", e);
     })
 }
 
+const newDoneWishIng = () => {return {"done": [], "wish": [], "ing": []}}
+
+const movieItemHelper = (items, movieIds, userMovies, movieMap, douId) => {
+    // 对每个item进行处理
+    for (let i = 0; i<= items.length; i++){
+        let movie = getMovieItem(items[i], movieIds, userMovies)
+        console.log("movie Item return:",movie)
+        if (movie === false) {
+            // 意味着有重复爬取的条目了
+            finished = true
+            break
+        }else if (movie.item !== null){
+            movieMap.set(movie.subjectId, movie.item)
+        }
+        userMovies.push({
+            "subjectId":movie.subjectId,
+            "marks": movie.marks
+        })
+    }
+    // 将更新后的内容存入storage
+    console.log("movieMap updated:",movieMap)
+    setMovieMap(movieMap)
+    console.log("UserMovies updated:",userMovies)
+    setUserMovies(douId,Type,userMovies)
+}
 
 // 从items获取信息，存入chrome.storage
-const getMovieItem = (item, douId, movieIds) => {
+const getMovieItem = (item, movieIds, userMovies) => {
     const subjectId = item.querySelector("a").href.split("/")[4]
-    if (movieIds.findIndex((x) => { x === subjectId }) !== -1) {
-        return false
-    }
-    let movieItem = {
-        "subjectId": subjectId,
-        "电影名": item.querySelector(".title a").innerText,
-        "豆瓣链接": item.querySelector("a").href,
-        "我的评分": item.querySelector(".date span").className.charat(6),
+    // 判断是否之前存入用户的 movies 了
+    if (userMovies.indexOf(subjectId) !== -1) return false
+
+    let marks = {
+        "我的评分": item.querySelector(".date span").className.charAt(6),
         "标记时间": item.querySelector(".date").innerText.trim(),
-        "短评": items[4].querySelector(".comment") !== null ? 
-            items[4].querySelector(".comment").innerText.trim() : "..."
+        "短评": item.querySelector(".comment") !== null ? 
+            item.querySelector(".comment").innerText.trim() : "..."
     }
-    console.log("simple:",movieItem)
+
+    // 判断是否已经爬取过详细信息了
+    if (movieIds.indexOf(subjectId) !== -1){
+        return {
+            "subjectId": subjectId,
+            "item": null,
+            "marks": marks
+        }
+    }
+
+    let movieItem = {
+        "电影名": item.querySelector(".title a").innerText.trim(),
+    }
+    console.log("simple item:",movieItem)
     // 详细信息收集
-    const details = movieDetail(subjectId)
+    let details = movieDetail(subjectId)
     movieItem = {
         ...movieItem,
         ...details
     }
+    console.log("movieItem in [getMovieItem]",movieItem)
     // 返回一个movie对象
-    return movieItem
+    return {
+        "subjectId": subjectId,
+        "item": movieItem,
+        "marks": marks
+    }
 }
 
 // 进入subject页面进行信息收集，存入 chrome.storage
 const movieDetail = (movieSubjectId) => {
     // 拼接url
-    const url = 'https://movieItem.douban.com/subject/' + movieSubjectId
+    const url = 'https://movie.douban.com/subject/' + movieSubjectId
     fetchText(url)
     .then((text) => {
         const dom = new DOMParser().parseFromString(text, "text/html");
@@ -115,7 +199,8 @@ const movieDetail = (movieSubjectId) => {
             "封面": dom.querySelector("#mainpic img").src.replace("webp","jpg")
         }
         const infos = Array.from(dom.querySelector("#info").innerText.split(/\r?\n/))
-        infos.reduce((acc, curr)=>{
+        // console.log("infos:",infos)
+        details = infos.reduce((acc, curr)=>{
             const k = curr.split(": ")[0]
             const v = curr.split(": ")[1]
             return {
@@ -124,7 +209,7 @@ const movieDetail = (movieSubjectId) => {
             }
         }
         ,details)
-        console.log(details)
+        console.log("movie item detail:",details)
         // 直接返回detail Object
         return details
     }).catch(e => {
@@ -132,6 +217,8 @@ const movieDetail = (movieSubjectId) => {
         return null
     })
 }
+
+// 检查条目的更新，将条目调入最新状态的数组
 
 // 
 
